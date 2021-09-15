@@ -16,21 +16,25 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/kikimo/nebula-stresser/cmd/edge"
 	"github.com/spf13/cobra"
 )
 
 var (
-	checkSpace    string
-	checkEdge     string
-	checkMetaAddr string
-	vertexNum     int
+	insertSpace      string
+	insertServerAddr *[]string
+	insertClientNum  int
+	insertVertexNum  int
 )
 
-// checkedgeCmd represents the checkedge command
-var checkedgeCmd = &cobra.Command{
-	Use:   "checkedge",
-	Short: "Check integrity of nebula edge",
+var defaultServers = []string{"192.168.15.11:9669", "192.168.15.11:9119", "192.168.15.11:9009"}
+
+// stressCmd represents the stress command
+var stressCmd = &cobra.Command{
+	Use:   "stress",
+	Short: "A brief description of your command",
 	Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 
@@ -38,25 +42,25 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		edge.RunCheckEdge(checkSpace, checkEdge, vertexNum, checkMetaAddr)
+		fmt.Println("stress called")
+		edge.RunInsertEdge(insertSpace, insertClientNum, insertVertexNum, *insertServerAddr)
 	},
 }
 
 func init() {
-	// checkedgeCmd.Flags().StringVarP(&)
-	checkedgeCmd.Flags().StringVarP(&checkSpace, "space", "s", "ttos_3p3r", "nebula to check")
-	checkedgeCmd.Flags().StringVarP(&checkEdge, "edge", "e", "known2", "edge to check")
-	checkedgeCmd.Flags().IntVarP(&vertexNum, "vertex", "x", 128, "number of vertex we wanna check")
-	checkedgeCmd.Flags().StringVarP(&checkMetaAddr, "meta_addr", "m", "192.168.15.11:9559", "meta server addr")
-	rootCmd.AddCommand(checkedgeCmd)
+	stressCmd.Flags().StringVarP(&insertSpace, "space", "s", "ttos_3p3r", "nebula we operate on")
+	stressCmd.Flags().IntVarP(&insertClientNum, "client", "c", 128, "number of concurrent clients")
+	stressCmd.Flags().IntVarP(&insertVertexNum, "vertex", "x", 64, "number of vertex in the space(will try inserting vertex^2 edges)")
+	insertServerAddr = stressCmd.Flags().StringArrayP("addrs", "a", defaultServers, "graph server addr")
+	rootCmd.AddCommand(stressCmd)
 
 	// Here you will define your flags and configuration settings.
 
 	// Cobra supports Persistent Flags which will work for this command
 	// and all subcommands, e.g.:
-	// checkedgeCmd.PersistentFlags().String("foo", "", "A help for foo")
+	// stressCmd.PersistentFlags().String("foo", "", "A help for foo")
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	// checkedgeCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// stressCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
