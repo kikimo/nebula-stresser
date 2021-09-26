@@ -16,17 +16,17 @@ limitations under the License.
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/kikimo/nebula-stresser/cmd/edge"
 	"github.com/spf13/cobra"
 )
 
 var (
-	insertSpace      string
-	insertServerAddr *[]string
-	insertClientNum  int
-	insertVertexNum  int
+	insertSpace         string
+	insertServerAddr    *[]string
+	insertClientNum     int
+	insertVertexNum     int
+	insertShuffleWindow int
+	insertEdgeName      string
 )
 
 var defaultServers = []string{"192.168.15.11:9669", "192.168.15.11:9119", "192.168.15.11:9009"}
@@ -42,15 +42,16 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("stress called")
-		edge.RunInsertEdge(insertSpace, insertClientNum, insertVertexNum, *insertServerAddr)
+		edge.RunInsertEdge(insertSpace, insertEdgeName, insertClientNum, insertVertexNum, *insertServerAddr, insertShuffleWindow)
 	},
 }
 
 func init() {
-	stressCmd.Flags().StringVarP(&insertSpace, "space", "s", "ttos_3p3r", "nebula we operate on")
+	stressCmd.Flags().StringVarP(&insertSpace, "space", "s", "ttos_3p3r", "nebula space to operate on")
+	stressCmd.Flags().StringVarP(&insertEdgeName, "edge", "e", "known2", "nebula edge to operate on")
 	stressCmd.Flags().IntVarP(&insertClientNum, "client", "c", 128, "number of concurrent clients")
 	stressCmd.Flags().IntVarP(&insertVertexNum, "vertex", "x", 64, "number of vertex in the space(will try inserting vertex^2 edges)")
+	stressCmd.Flags().IntVarP(&insertShuffleWindow, "sw", "w", 4, "shuffle window")
 	insertServerAddr = stressCmd.Flags().StringArrayP("addrs", "a", defaultServers, "graph server addr")
 	rootCmd.AddCommand(stressCmd)
 

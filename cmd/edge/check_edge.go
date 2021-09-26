@@ -336,6 +336,7 @@ func (s *NebulaStresser) CheckEdges(spaceName string, edge string, vertexes int)
 	}
 
 	missingEdges := []string{}
+	fmt.Printf("vertexes: %d\n", vertexes)
 	for i := 1; i <= vertexes; i++ {
 		for j := 1; j <= vertexes; j++ {
 			k := fmt.Sprintf("%d->%d", i, j)
@@ -371,5 +372,5 @@ func RunCheckEdge(spaceName string, edgeName string, vertexes int, metaAddr stri
 	}
 
 	stresser := NewNebulStresser(nebulaClient)
-	stresser.CheckEdges(spaceName, edgeName, 128)
+	stresser.CheckEdges(spaceName, edgeName, vertexes)
 }

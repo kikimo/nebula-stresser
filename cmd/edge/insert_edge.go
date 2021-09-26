@@ -11,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
+	"github.com/kikimo/nebula-stresser/pkg/client"
 	nebula "github.com/vesoft-inc/nebula-go/v2"
 )
 
@@ -27,10 +29,10 @@ const (
 // Initialize logger
 var log = nebula.DefaultLogger{}
 
-type Client struct {
-	ID      int
-	session *nebula.Session
-}
+// type Client struct {
+// 	ID      int
+// 	session *nebula.Session
+// }
 
 func convertAddrs(addrs []string) ([]nebula.HostAddress, error) {
 	hostAddrs := []nebula.HostAddress{}
@@ -56,7 +58,8 @@ func convertAddrs(addrs []string) ([]nebula.HostAddress, error) {
 	return hostAddrs, nil
 }
 
-func RunInsertEdge(spaceName string, clientNum int, vertexNum int, addrs []string) {
+func RunInsertEdge(spaceName string, edgeName string, clientNum int, vertexNum int, addrs []string, shuffleWindow int) {
+	doneSet := make([]int32, vertexNum*vertexNum)
 	hostList, err := convertAddrs(addrs)
 	if err != nil {
 		panic(err)
@@ -74,27 +77,17 @@ func RunInsertEdge(spaceName string, clientNum int, vertexNum int, addrs []strin
 	// Close all connections in the pool
 	defer pool.Close()
 
-	checkResultSet := func(prefix string, res *nebula.ResultSet) {
-		if !res.IsSucceed() {
-			log.Fatal(fmt.Sprintf("%s, ErrorCode: %v, ErrorMsg: %s", prefix, res.GetErrorCode(), res.GetErrorMsg()))
-			panic(fmt.Sprintf("%s, ErrorCode: %v, ErrorMsg: %s", prefix, res.GetErrorCode(), res.GetErrorMsg()))
-		}
-	}
-
-	clients := make([]Client, clientNum)
+	clients := make([]*client.SessionX, clientNum)
 	for i := range clients {
-		c := &clients[i]
-		if c.session, err = pool.GetSession(username, password); err != nil {
+		session, err := pool.GetSession(username, password)
+		if err != nil {
 			panic(fmt.Sprintf("failed creating nebula session %+v", err))
 		}
+		clients[i] = client.New(i+1, session)
 
-		c.ID = i + 1
-		rs, err := c.session.Execute(fmt.Sprintf("use %s;", spaceName))
-		if err != nil {
+		if _, err := clients[i].Execute(fmt.Sprintf("use %s;", spaceName)); err != nil {
 			panic(fmt.Sprintf("error switching space: %+v", err))
 		}
-
-		checkResultSet("", rs)
 	}
 
 	// TODO batch insert edge
@@ -110,7 +103,7 @@ func RunInsertEdge(spaceName string, clientNum int, vertexNum int, addrs []strin
 
 			for x := 0; x < vertexNum; x++ {
 				for y := 0; y < vertexNum; y++ {
-					stmt := fmt.Sprintf(`insert edge known2(idx) values %d->%d:("%d-%d")`, x+1, y+1, iClient+1, ith+1)
+					stmt := fmt.Sprintf(`insert edge %s(idx) values %d->%d:("%d-%d")`, edgeName, x+1, y+1, iClient+1, ith+1)
 					iStmts[ith] = stmt
 					ith++
 				}
@@ -129,27 +122,78 @@ func RunInsertEdge(spaceName string, clientNum int, vertexNum int, addrs []strin
 	// 		// fmt.Printf("%s\n", stmts[i][j])
 	// 	}
 	// }
+	if shuffleWindow > 1 {
+		// for i := 0; i < edges; i += shuffleWindow {
+		// 	// shuffle edge through [i, i + shuffleWindow)
+		// 	start, end := i, i+shuffleWindow
+		// 	if end > edges {
+		// 		end = edges
+		// 	}
+
+		// 	// TODO perform shuffle
+		// 	sz := end - start
+		// 	for j := 0; j < clientNum; j++ {
+		// 		rand.Shuffle(sz, func(x, y int) {
+		// 			stmts[j][x+i], stmts[j][y+i] = stmts[j][y+i], stmts[j][x+i]
+		// 		})
+		// 	}
+		// }
+		fmt.Printf("skip shuffle\n")
+	}
+
+	// for i := 0; i < edges; i++ {
+	// 	fmt.Printf("%d: %s\n", i+1, stmts[0][i])
+	// }
+
 	fmt.Printf("done building insert edge statments, inserting edges....\n")
 	for i := 0; i < edges; i++ {
 		var wg sync.WaitGroup
 		wg.Add(clientNum)
 		for j := range clients {
-			go func(c *Client, stmt string) {
+			go func(c *client.SessionX, stmt string) {
 				// for k := 0; k < 100; k++ {
-				rs, err := c.session.Execute(stmt)
-				// fmt.Println(stmt)
-				if err != nil {
-					panic(fmt.Sprintf("failed inserting edge: %s", stmt))
+				for {
+					_, err := c.Execute(stmt)
+					if err == nil {
+						fmt.Printf("done edge %d\n", i)
+						atomic.StoreInt32(&doneSet[i], 1)
+						break
+					} else {
+						// log.Error(fmt.Sprintf("client %d failed executing %s, %+v, retry...", c.GetID(), stmt, err))
+						break
+					}
 				}
+				// c.session.Execute(stmt)
+				// fmt.Println(stmt)
+				// if err != nil {
+				// 	continue
+				// }
 
-				checkResultSet("", rs)
+				// if err := checkResultSet("", rs); err != nil {
+				// 	continue
+				// }
+
 				// }
 				wg.Done()
-			}(&clients[j], stmts[j][i])
+				// break
+			}(clients[j], stmts[j][i])
 		}
 		wg.Wait()
 	}
 
+	failed := 0
+	for i := range doneSet {
+		if doneSet[i] == 0 {
+			in := i / vertexNum
+			out := i % vertexNum
+			fmt.Printf("failed inserting %d->%d\n", in, out)
+			failed++
+		}
+	}
+
+	fmt.Printf("failed: %d\n", failed)
+
+	// TODO don't delete me
 	// for i := range clients {
 	// 	go func(c *Client, stmt []string) {
 	// 		// fmt.Printf("session: %+v\n", c.session)
@@ -171,6 +215,6 @@ func RunInsertEdge(spaceName string, clientNum int, vertexNum int, addrs []strin
 	fmt.Printf("insert done!\n")
 
 	for _, c := range clients {
-		c.session.Release()
+		c.Release()
 	}
 }

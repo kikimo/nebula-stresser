@@ -15,8 +15,17 @@ limitations under the License.
 */
 package main
 
-import "github.com/kikimo/nebula-stresser/cmd"
+import (
+	"math/rand"
+	"time"
+
+	"github.com/kikimo/nebula-stresser/cmd"
+)
 
 func main() {
 	cmd.Execute()
+}
+
+func inti() {
+	rand.Seed(time.Now().UnixNano())
 }
