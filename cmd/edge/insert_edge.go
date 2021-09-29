@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/kikimo/nebula-stresser/pkg/client"
 	nebula "github.com/vesoft-inc/nebula-go/v2"
@@ -67,7 +68,8 @@ func RunInsertEdge(spaceName string, edgeName string, clientNum int, vertexNum i
 
 	// Create configs for connection pool using default values
 	testPoolConfig := nebula.GetDefaultConf()
-	testPoolConfig.MaxConnPoolSize = clientNum
+	testPoolConfig.TimeOut = 500 * time.Millisecond
+	testPoolConfig.MaxConnPoolSize = clientNum * 10
 
 	// Initialize connection pool
 	pool, err := nebula.NewConnectionPool(hostList, testPoolConfig, log)
@@ -79,14 +81,21 @@ func RunInsertEdge(spaceName string, edgeName string, clientNum int, vertexNum i
 
 	clients := make([]*client.SessionX, clientNum)
 	for i := range clients {
-		session, err := pool.GetSession(username, password)
-		if err != nil {
-			panic(fmt.Sprintf("failed creating nebula session %+v", err))
-		}
-		clients[i] = client.New(i+1, session)
+		ok := false
+		for !ok {
+			session, err := pool.GetSession(username, password)
+			if err != nil {
+				fmt.Printf("failed creating nebula session %+v\n", err)
+				continue
+			}
+			clients[i] = client.New(i+1, session)
 
-		if _, err := clients[i].Execute(fmt.Sprintf("use %s;", spaceName)); err != nil {
-			panic(fmt.Sprintf("error switching space: %+v", err))
+			if _, err := clients[i].Execute(fmt.Sprintf("use %s;", spaceName)); err != nil {
+				fmt.Printf("error switching space: %+v\n", err)
+				continue
+			}
+
+			ok = true
 		}
 	}
 

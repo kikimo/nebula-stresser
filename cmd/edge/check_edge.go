@@ -2,10 +2,9 @@ package edge
 
 import (
 	"fmt"
-	"math"
 	"time"
 
-	"github.com/facebook/fbthrift/thrift/lib/go/thrift"
+	"github.com/kikimo/nebula-stresser/pkg/client"
 	"github.com/vesoft-inc/nebula-go/v2/nebula"
 	"github.com/vesoft-inc/nebula-go/v2/nebula/meta"
 	"github.com/vesoft-inc/nebula-go/v2/nebula/storage"
@@ -18,36 +17,14 @@ type NebulaClient struct {
 	storageClients   []*storage.GraphStorageServiceClient
 }
 
-func newMetaClient(metaAddr string) (*meta.MetaServiceClient, error) {
-	timeoutOption := thrift.SocketTimeout(10 * time.Second)
-	bufferSize := 128 << 10
-	frameMaxLength := uint32(math.MaxUint32)
-	addressOption := thrift.SocketAddr(metaAddr)
-	sock, err := thrift.NewSocket(timeoutOption, addressOption)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create a net.Conn-backed Transport,: %s", err.Error())
-	}
-	// Set transport buffer
-	bufferedTranFactory := thrift.NewBufferedTransportFactory(bufferSize)
-	transport := thrift.NewFramedTransportMaxLength(bufferedTranFactory.GetTransport(sock), frameMaxLength)
-	pf := thrift.NewBinaryProtocolFactoryDefault()
-	metaClient := meta.NewMetaServiceClientFactory(transport, pf)
-	// cn.graph = graph.NewGraphServiceClientFactory(transport, pf)
-	if err := metaClient.Open(); err != nil {
-		return nil, fmt.Errorf("failed to open transport, error: %s", err.Error())
-	}
-
-	if !metaClient.IsOpen() {
-		return nil, fmt.Errorf("transport is off")
-	}
-
-	return metaClient, nil
-}
-
 func NewNebulaClient(metaAddrs []string) (*NebulaClient, error) {
 	nebulaClient := &NebulaClient{}
+	metaOpt := client.MetaOption{
+		Timeout:    1 * time.Second,
+		BufferSize: 128 << 10,
+	}
 	for _, metaAddr := range metaAddrs {
-		metaClient, err := newMetaClient(metaAddr)
+		metaClient, err := client.NewMetaClient(metaAddr, metaOpt)
 		if err != nil {
 			return nil, fmt.Errorf("error creating nebula client, nested error: %+v", err)
 		}
@@ -82,10 +59,14 @@ func (c *NebulaClient) initStorageClients() error {
 	}
 
 	storageServers := listClusterResp.GetStorageServers()
+	storageOpt := client.StorageOption{
+		Timeout:    1 * time.Second,
+		BufferSize: 128 << 10,
+	}
 	for _, ss := range storageServers {
 		host := ss.Host
 		storageAddr := fmt.Sprintf("%s:%d", host.GetHost(), host.GetPort())
-		storageClient, err := initStorageClient(storageAddr)
+		storageClient, err := client.NewGraphStorageServiceClient(storageAddr, storageOpt)
 		if err != nil {
 			return fmt.Errorf("error init storage clients, nested error: %+v", err)
 		}
@@ -94,34 +75,6 @@ func (c *NebulaClient) initStorageClients() error {
 	}
 
 	return nil
-}
-
-func initStorageClient(addr string) (*storage.GraphStorageServiceClient, error) {
-	timeoutOption := thrift.SocketTimeout(10 * time.Second)
-	bufferSize := 128 << 10
-	frameMaxLength := uint32(math.MaxUint32)
-	addressOption := thrift.SocketAddr(addr)
-	sock, err := thrift.NewSocket(timeoutOption, addressOption)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create a net.Conn-backed Transport,: %s", err.Error())
-	}
-
-	// Set transport buffer
-	bufferedTranFactory := thrift.NewBufferedTransportFactory(bufferSize)
-	transport := thrift.NewFramedTransportMaxLength(bufferedTranFactory.GetTransport(sock), frameMaxLength)
-	pf := thrift.NewBinaryProtocolFactoryDefault()
-
-	storageClient := storage.NewGraphStorageServiceClientFactory(transport, pf)
-	// cn.graph = graph.NewGraphServiceClientFactory(transport, pf)
-	if err := storageClient.Open(); err != nil {
-		return nil, fmt.Errorf("failed to open transport, error: %s", err.Error())
-	}
-
-	if !storageClient.IsOpen() {
-		return nil, fmt.Errorf("transport is off")
-	}
-
-	return storageClient, nil
 }
 
 type NebulaStresser struct {
@@ -337,8 +290,8 @@ func (s *NebulaStresser) CheckEdges(spaceName string, edge string, vertexes int)
 
 	missingEdges := []string{}
 	fmt.Printf("vertexes: %d\n", vertexes)
-	for i := 1; i <= vertexes; i++ {
-		for j := 1; j <= vertexes; j++ {
+	for i := 0; i <= vertexes; i++ {
+		for j := 0; j <= vertexes; j++ {
 			k := fmt.Sprintf("%d->%d", i, j)
 			if _, ok := totalEdgeSet[k]; !ok {
 				missingEdges = append(missingEdges, k)
