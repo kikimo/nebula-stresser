@@ -18,7 +18,6 @@ package cmd
 import (
 	"encoding/binary"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -29,19 +28,21 @@ import (
 )
 
 var (
-	stressEdgeMetaAddr  string
-	stressEdgeClientNum int
-	stressEdgeVertexNum int
+	stressEdgeMetaAddr   string
+	stressEdgeClientNum  int
+	stressEdgeVertexNum  int
+	stressEdgeEnableToss bool
 )
 
 const (
-	defaultStressEdgeMetaAddr = "192.168.15.11:9559"
+	defaultStressEdgeMetaAddr = "192.168.15.11:8448"
+	// defaultStressEdgeMetaAddr = "192.168.8.53:9559"
 )
 
 // stressEdgeCmd represents the stressEdge command
 var stressEdgeCmd = &cobra.Command{
 	Use:   "stressEdge",
-	Short: "A brief description of your command",
+	Short: "stree test fo edge inserting",
 	Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 
@@ -57,6 +58,7 @@ func init() {
 	stressEdgeCmd.Flags().StringVarP(&stressEdgeMetaAddr, "meta_addr", "m", defaultStressEdgeMetaAddr, "meta server addr")
 	stressEdgeCmd.Flags().IntVarP(&stressEdgeClientNum, "client", "c", 1, "number of clients")
 	stressEdgeCmd.Flags().IntVarP(&stressEdgeVertexNum, "vertex", "x", 1, "number of vertex")
+	stressEdgeCmd.Flags().BoolVarP(&stressEdgeEnableToss, "toss", "t", true, "enable toss")
 	rootCmd.AddCommand(stressEdgeCmd)
 
 	// Here you will define your flags and configuration settings.
@@ -70,7 +72,11 @@ func init() {
 	// stressEdgeCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-func doStressEdge(client *client.StorageClient, src int, dst int) (*storage.ExecResponse, error) {
+func getPartID(vid int64, numParts int32) int32 {
+	return int32(vid%int64(numParts)) + 1
+}
+
+func doStressEdge(client client.StorageClient, spaceID nebula.GraphSpaceID, numParts int32, edgeType nebula.EdgeType, src int, dst int, idx string) (*storage.ExecResponse, error) {
 	// src := uint64(1)
 	// dst := uint64(1)
 
@@ -78,6 +84,10 @@ func doStressEdge(client *client.StorageClient, src int, dst int) (*storage.Exec
 	dstData := [8]byte{}
 	binary.LittleEndian.PutUint64(srcData[:], uint64(src))
 	binary.LittleEndian.PutUint64(dstData[:], uint64(dst))
+	propIdx := &nebula.Value{
+		SVal: []byte(idx),
+	}
+	props := []*nebula.Value{propIdx}
 	// edgeType := nebula.EdgeType
 	eKey := storage.EdgeKey{
 		Src: &nebula.Value{
@@ -86,23 +96,34 @@ func doStressEdge(client *client.StorageClient, src int, dst int) (*storage.Exec
 		Dst: &nebula.Value{
 			SVal: dstData[:],
 		},
-		EdgeType: nebula.EdgeType(2),
+		EdgeType: edgeType,
+		// EdgeType: int32(5),
 	}
 	// fmt.Printf("key: %+v\n", eKey)
 	edges := []*storage.NewEdge_{
 		{
-			Key: &eKey,
+			Key:   &eKey,
+			Props: props,
 		},
 	}
+	partID := getPartID(int64(src), numParts)
 	parts := map[nebula.PartitionID][]*storage.NewEdge_{
-		1: edges,
+		int32(partID): edges,
 	}
 	req := storage.AddEdgesRequest{
-		SpaceID: 1,
-		Parts:   parts,
+		SpaceID: spaceID,
+		// SpaceID:   8848,
+		Parts:     parts,
+		PropNames: [][]byte{[]byte("idx")},
 	}
 
-	return client.ChainAddEdges(&req)
+	// fmt.Printf("client: %+v, req: %+v\n", client, req)
+	// FIXME use function pointer instead
+	if stressEdgeEnableToss {
+		return client.ChainAddEdges(&req)
+	} else {
+		return client.AddEdges(&req)
+	}
 }
 
 func RunStressEdge(clientNum int, vertexNum int) {
@@ -110,23 +131,46 @@ func RunStressEdge(clientNum int, vertexNum int) {
 	// vertexNum := 64
 	// spaceID := 1
 	shuffleWindow := 1
+	spaceName := "ttos_3p3r"
+	edgeName := "known2"
 
 	metaOpt := client.MetaOption{
-		Timeout:    4 * time.Second,
+		Timeout:    8 * time.Second,
 		BufferSize: 128 << 10, // FIXME magic number
 	}
+	fmt.Printf("meta addr: %+v\n", stressEdgeMetaAddr)
 	metaClient, err := client.NewMetaClient(stressEdgeMetaAddr, metaOpt)
 	if err != nil {
 		panic(fmt.Sprintf("failed creating meta client: %+v", err))
 	}
 
+	spaceResp, err := metaClient.GetSpaceByName(spaceName)
+	if err != nil {
+		panic(err)
+	}
+	spaceID := spaceResp.GetItem().GetSpaceID()
+	numParts := spaceResp.GetItem().Properties.GetPartitionNum()
+	fmt.Printf("space id of %s is: %d\n", spaceName, spaceID)
+
+	edgeItem, err := metaClient.GetEdgeItem(spaceID, edgeName)
+	if err != nil {
+		panic(err)
+	}
+	edgeType := edgeItem.GetEdgeType()
+	fmt.Printf("edge type of %s is: %d\n", edgeName, edgeType)
+
 	storageOpt := client.StorageOption{
-		Timeout:    4 * time.Second,
+		Timeout:    256 * time.Millisecond,
 		BufferSize: 128 << 10, // FIXME magic number
 	}
-	clients := make([]*client.StorageClient, clientNum)
+	clients := make([]client.StorageClient, clientNum)
 	for i := range clients {
-		clients[i], err = client.NewStorageClient(metaClient, storageOpt)
+		mClient, err := client.NewMetaClient(stressEdgeMetaAddr, metaOpt)
+		if err != nil {
+			panic(fmt.Sprintf("failed creating meta client: %+v", err))
+		}
+
+		clients[i], err = client.NewStorageClient(mClient, storageOpt, spaceID, numParts)
 		if err != nil {
 			panic(fmt.Sprintf("failed creating storage client: %+v", err))
 		}
@@ -165,41 +209,115 @@ func RunStressEdge(clientNum int, vertexNum int) {
 	// for i := 0; i < edges; i++ {
 	// 	fmt.Printf("%d: %s\n", i+1, stmts[0][i])
 	// }
-
+	// metaLock := sync.Mutex{}
 	fmt.Printf("inserting edge...\n")
-	for i := 0; i < edges; i++ {
-		fmt.Printf("insert edge %d\n", i)
-		var wg sync.WaitGroup
-		wg.Add(clientNum)
-		for j := range clients {
-			go func(cid int, c *client.StorageClient, edge int) {
-				src := edge / vertexNum
-				dst := edge % vertexNum
-
+	var waitClients sync.WaitGroup
+	waitClients.Add(clientNum)
+	for i := 0; i < clientNum; i++ {
+		go func(cid int) {
+			// for j := 0; j <
+			for j := 0; j < edges; j++ {
+				src := j / vertexNum
+				dst := j % vertexNum
+				idx := fmt.Sprintf("%d->%d", cid, j)
+				fmt.Printf("client %d insert %d edge\n", cid, j)
+				retry := 0
 				for {
-					_, err := doStressEdge(c, src, dst)
-					if err != nil {
-						if strings.Index(err.Error(), "wrong leader") == 0 {
-							// panic(fmt.Sprintf("fuck wrong leader: %+v", err))
-							fmt.Printf("%d wrong leader %d, try again inserting %d, err: %+v\n", cid, c.Leader(), edge, err)
-						} else if strings.Index(err.Error(), "write tcp ") == 0 || strings.Index(err.Error(), "read tcp ") == 0 {
-							fmt.Printf("error inserting edge: %+v\n", err)
-							clients[cid], err = client.NewStorageClient(metaClient, storageOpt)
-							if err != nil {
-								panic(err)
-							}
-						} else {
-							fmt.Printf("error inserting edge: %+v\n", err)
-						}
-					} else {
+					resp, err := doStressEdge(clients[cid], spaceID, numParts, edgeType, src, dst, idx)
+					if err == nil {
 						break
 					}
+
+					fmt.Printf("error insert edge: %+v, resp: %+v", err, resp)
+					retry++
 				}
-				wg.Done()
-			}(j, clients[j], i)
-		}
-		wg.Wait()
+
+			}
+			waitClients.Done()
+		}(i)
 	}
+	waitClients.Wait()
+
+	/*
+		for i := 0; i < edges; i++ {
+			fmt.Printf("insert edge %d\n", i)
+			var wg sync.WaitGroup
+			wg.Add(clientNum)
+			for j := range clients {
+				go func(cid int, edge int) {
+					src := edge / vertexNum
+					dst := edge % vertexNum
+					idx := fmt.Sprintf("%d->%d", cid, edge)
+					for {
+						_, err := doStressEdge(clients[cid], spaceID, edgeType, src, dst, idx)
+						if err != nil {
+							if strings.Index(err.Error(), "wrong leader") == 0 {
+								// panic(fmt.Sprintf("fuck wrong leader: %+v", err))
+								fmt.Printf("%d wrong leader %d, try again inserting %d, err: %+v\n", cid, clients[cid].Leader(), edge, err)
+							} else if strings.Index(err.Error(), "write tcp ") == 0 || strings.Index(err.Error(), "read tcp ") == 0 {
+								fmt.Printf("error inserting edge %d: %+v\n", edge, err)
+								// metaLock.Lock()
+								// clients[cid], err = client.NewStorageClient(metaClient, storageOpt)
+								// metaLock.Unlock()
+								// if err != nil {
+								// 	panic(err)
+								// }
+
+								clients[cid].UpdateLeader(nil)
+							} else {
+								fmt.Printf("fuck error inserting edge %d: %+v\n", edge, err)
+								metaLock.Lock()
+								clients[cid], err = client.NewStorageClient(metaClient, storageOpt)
+								metaLock.Unlock()
+								if err != nil {
+									panic(err)
+								}
+							}
+						} else {
+							break
+						}
+					}
+					wg.Done()
+				}(j, i)
+			}
+			wg.Wait()
+		}
+	*/
+
+	// for i := 0; i < edges; i++ {
+	// 	fmt.Printf("insert edge %d\n", i)
+	// 	var wg sync.WaitGroup
+	// 	wg.Add(clientNum)
+	// 	for j := range clients {
+	// 		go func(cid int, c *client.StorageClient, edge int) {
+	// 			src := edge / vertexNum
+	// 			dst := edge % vertexNum
+	// 			idx := fmt.Sprintf("%d->%d", cid, edge)
+	// 			for {
+	// 				_, err := doStressEdge(c, spaceID, edgeType, src, dst, idx)
+	// 				if err != nil {
+	// 					if strings.Index(err.Error(), "wrong leader") == 0 {
+	// 						// panic(fmt.Sprintf("fuck wrong leader: %+v", err))
+	// 						fmt.Printf("%d wrong leader %d, try again inserting %d, err: %+v\n", cid, c.Leader(), edge, err)
+	// 					} else if strings.Index(err.Error(), "write tcp ") == 0 || strings.Index(err.Error(), "read tcp ") == 0 {
+	// 						fmt.Printf("error inserting edge: %+v\n", err)
+	// 						clients[cid], err = client.NewStorageClient(metaClient, storageOpt)
+	// 						if err != nil {
+	// 							panic(err)
+	// 						}
+	// 						// clients[cid].UpdateLeader()
+	// 					} else {
+	// 						fmt.Printf("fuck error inserting edge: %+v\n", err)
+	// 					}
+	// 				} else {
+	// 					break
+	// 				}
+	// 			}
+	// 			wg.Done()
+	// 		}(j, clients[j], i)
+	// 	}
+	// 	wg.Wait()
+	// }
 	fmt.Printf("done inserting edge\n")
 
 	/*

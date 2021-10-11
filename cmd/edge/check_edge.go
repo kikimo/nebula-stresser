@@ -12,7 +12,7 @@ import (
 
 type NebulaClient struct {
 	metaClientIdx    int
-	metaClients      []*meta.MetaServiceClient
+	metaClients      []*client.MetaClient
 	storageClientIdx int
 	storageClients   []*storage.GraphStorageServiceClient
 }
@@ -39,7 +39,7 @@ func NewNebulaClient(metaAddrs []string) (*NebulaClient, error) {
 	return nebulaClient, nil
 }
 
-func (c *NebulaClient) GetMetaClient() *meta.MetaServiceClient {
+func (c *NebulaClient) GetMetaClient() *client.MetaClient {
 	// FIXME concurrent
 	c.metaClientIdx = (c.metaClientIdx + 1) % len(c.metaClients)
 	return c.metaClients[c.metaClientIdx]
@@ -290,8 +290,8 @@ func (s *NebulaStresser) CheckEdges(spaceName string, edge string, vertexes int)
 
 	missingEdges := []string{}
 	fmt.Printf("vertexes: %d\n", vertexes)
-	for i := 0; i <= vertexes; i++ {
-		for j := 0; j <= vertexes; j++ {
+	for i := 0; i < vertexes; i++ {
+		for j := 0; j < vertexes; j++ {
 			k := fmt.Sprintf("%d->%d", i, j)
 			if _, ok := totalEdgeSet[k]; !ok {
 				missingEdges = append(missingEdges, k)
@@ -325,5 +325,7 @@ func RunCheckEdge(spaceName string, edgeName string, vertexes int, metaAddr stri
 	}
 
 	stresser := NewNebulStresser(nebulaClient)
-	stresser.CheckEdges(spaceName, edgeName, vertexes)
+	if err := stresser.CheckEdges(spaceName, edgeName, vertexes); err != nil {
+		panic(fmt.Sprintf("failed checking edge: %+v", err))
+	}
 }

@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/facebook/fbthrift/thrift/lib/go/thrift"
@@ -16,18 +17,27 @@ type StorageOption struct {
 	BufferSize int // in bytes
 }
 
-func NewGraphStorageServiceClient(addr string, opt StorageOption) (*storage.GraphStorageServiceClient, error) {
-	return newStorageClient(addr, opt)
+func newDefaultStorageClient(addr string, opt StorageOption) (*defaultStorageClient, error) {
+	client := defaultStorageClient{
+		addr: addr,
+		opt:  opt,
+	}
+
+	if err := client.rest(); err != nil {
+		return nil, fmt.Errorf("error creating storage client: %+v", err)
+	}
+
+	return &client, nil
 }
 
-func newStorageClient(addr string, opt StorageOption) (*storage.GraphStorageServiceClient, error) {
+func NewGraphStorageServiceClient(addr string, opt StorageOption) (*storage.GraphStorageServiceClient, error) {
 	timeout := thrift.SocketTimeout(opt.Timeout)
 	// TODO what for?
 	frameMaxLength := uint32(math.MaxUint32)
 	sockAddr := thrift.SocketAddr(addr)
 	sock, err := thrift.NewSocket(timeout, sockAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create a net.Conn-backed Transport,: %s", err.Error())
+		return nil, fmt.Errorf("failed creating a net.Conn-backed Transport,: %+v", err)
 	}
 
 	// Set transport buffer
@@ -38,7 +48,7 @@ func newStorageClient(addr string, opt StorageOption) (*storage.GraphStorageServ
 	client := storage.NewGraphStorageServiceClientFactory(transport, pf)
 	// cn.graph = graph.NewGraphServiceClientFactory(transport, pf)
 	if err := client.Open(); err != nil {
-		return nil, fmt.Errorf("failed to open transport, error: %s", err.Error())
+		return nil, fmt.Errorf("failed to open transport, error: %+v", err)
 	}
 
 	if !client.IsOpen() {
@@ -48,98 +58,78 @@ func newStorageClient(addr string, opt StorageOption) (*storage.GraphStorageServ
 	return client, nil
 }
 
-type StorageClient struct {
-	// *storage.GraphStorageServiceClient
-	storage.GraphStorageServiceClient
-	clients    []*storage.GraphStorageServiceClient
-	currLeader int
-}
+func (c *defaultStorageClient) rest() error {
+	// try close client first
+	if c.GraphStorageServiceClient != nil && c.GraphStorageServiceClient.IsOpen() {
+		if err := c.GraphStorageServiceClient.Close(); err != nil {
+			fmt.Printf("error close storage client: %+v", err)
+		}
+	}
 
-func (c *StorageClient) Leader() int {
-	return c.currLeader
-}
-
-func (c *StorageClient) updateLeader() {
-	// oldLeader := c.currLeader
-	c.currLeader = (c.currLeader + 1) % len(c.clients)
-	// fmt.Printf("updating leader from %d to %d\n", oldLeader, c.currLeader)
-}
-
-func (c *StorageClient) leader() *storage.GraphStorageServiceClient {
-	return c.clients[c.currLeader]
-}
-
-func (c *StorageClient) GetNeighbors(req *storage.GetNeighborsRequest) (_r *storage.GetNeighborsResponse, err error) {
-	resp, err := c.leader().GetNeighbors(req)
+	client, err := NewGraphStorageServiceClient(c.addr, c.opt)
 	if err != nil {
-		return resp, err
+		return fmt.Errorf("failed resting storage client: %+v", err)
 	}
+	c.GraphStorageServiceClient = client
 
-	failedParts := resp.GetResult_().GetFailedParts()
-	if len(failedParts) == 0 {
-		return resp, nil
-	}
-
-	// len(failedParts) > 0 {
-	fPart := failedParts[0]
-	if !fPart.IsSetLeader() {
-		c.updateLeader()
-	}
-
-	return resp, err
+	return nil
 }
 
-/*
-
-func (c *StorageClient) GetProps(ctx context.Context, req *GetPropRequest) (_r *GetPropResponse, err error) {
-
-}
-func (c *StorageClient) AddVertices(ctx context.Context, req *AddVerticesRequest) (_r *ExecResponse, err error) {
-
-}
-func (c *StorageClient) AddEdges(ctx context.Context, req *AddEdgesRequest) (_r *ExecResponse, err error) {
-
-}
-func (c *StorageClient) DeleteEdges(ctx context.Context, req *DeleteEdgesRequest) (_r *ExecResponse, err error) {
-
-}
-func (c *StorageClient) DeleteVertices(ctx context.Context, req *DeleteVerticesRequest) (_r *ExecResponse, err error) {
-
-}
-func (c *StorageClient) DeleteTags(ctx context.Context, req *DeleteTagsRequest) (_r *ExecResponse, err error) {
-
-}
-func (c *StorageClient) UpdateVertex(ctx context.Context, req *UpdateVertexRequest) (_r *UpdateResponse, err error) {
-
-}
-func (c *StorageClient) UpdateEdge(ctx context.Context, req *UpdateEdgeRequest) (_r *UpdateResponse, err error) {
-
-}
-func (c *StorageClient) ScanVertex(ctx context.Context, req *ScanVertexRequest) (_r *ScanVertexResponse, err error) {
-
-}
-func (c *StorageClient) ScanEdge(ctx context.Context, req *ScanEdgeRequest) (_r *ScanEdgeResponse, err error) {
-
-}
-func (c *StorageClient) GetUUID(ctx context.Context, req *GetUUIDReq) (_r *GetUUIDResp, err error) {
-
-}
-func (c *StorageClient) LookupIndex(ctx context.Context, req *LookupIndexRequest) (_r *LookupIndexResp, err error) {
-
-}
-func (c *StorageClient) LookupAndTraverse(ctx context.Context, req *LookupAndTraverseRequest) (_r *GetNeighborsResponse, err error) {
-
-}
-func (c *StorageClient) ChainUpdateEdge(ctx context.Context, req *UpdateEdgeRequest) (_r *UpdateResponse, err error) {
-
+type StorageClient interface {
+	AddEdges(req *storage.AddEdgesRequest) (*storage.ExecResponse, error)
+	ChainAddEdges(req *storage.AddEdgesRequest) (*storage.ExecResponse, error)
 }
 
-*/
-func (c *StorageClient) ChainAddEdges(req *storage.AddEdgesRequest) (_r *storage.ExecResponse, err error) {
-	// fmt.Printf("curr leader: %d\n", c.currLeader)
-	resp, err := c.leader().ChainAddEdges(req)
+type defaultStorageClient struct {
+	// metaClient *MetaClient
+	addr string
+	opt  StorageOption
+	*storage.GraphStorageServiceClient
+}
+
+type storageClientProxy struct {
+	peers      []*defaultStorageClient
+	connDown   map[int]struct{}
+	metaClient *MetaClient
+	leader     int
+}
+
+func (s *storageClientProxy) currLeader() *defaultStorageClient {
+	return s.peers[s.leader]
+}
+
+func (s *storageClientProxy) AddEdges(req *storage.AddEdgesRequest) (*storage.ExecResponse, error) {
+	resp, err := s.currLeader().AddEdges(req)
+
+	return s.checkResponse(resp, err)
+}
+
+func (s *storageClientProxy) checkResponse(resp *storage.ExecResponse, err error) (*storage.ExecResponse, error) {
 	if err != nil {
-		return resp, err
+		if strings.Index(err.Error(), "write tcp ") == 0 || strings.Index(err.Error(), "read tcp ") == 0 {
+			fmt.Printf("error inserting edge: %+v\n", err)
+			s.updateLeader()
+
+			return resp, err
+		} else if strings.Contains(err.Error(), "failed: out of sequence response") {
+			fmt.Printf("error inserting edge: %+v\n", err)
+			if err := s.currLeader().rest(); err != nil {
+				fmt.Printf("error resting leader conn: %+v", err)
+			}
+
+			return resp, err
+		} else {
+			// clients[cid].UpdateLeader()
+			// time.Sleep(1 * time.Second)
+			// fmt.Printf("fuck error inserting edge: %+v\n", err)
+			panic(fmt.Sprintf("fuck error inserting edge: %+v\n", err))
+			// metaLock.Lock()
+			// clients[cid], err = client.NewStorageClient(metaClient, storageOpt)
+			// metaLock.Unlock()
+			// if err != nil {
+			// 	fmt.Printf("failed creating new client: %+v", err)
+			// }
+		}
 	}
 
 	failedParts := resp.GetResult_().GetFailedParts()
@@ -150,63 +140,81 @@ func (c *StorageClient) ChainAddEdges(req *storage.AddEdgesRequest) (_r *storage
 
 	// len(failedParts) > 0 {
 	fPart := failedParts[0]
-	if fPart.GetCode() == nebula.ErrorCode_E_LEADER_CHANGED {
-		c.updateLeader()
-		return resp, fmt.Errorf("wrong leader: %+v", fPart)
+	switch fPart.GetCode() {
+	case nebula.ErrorCode_E_LEADER_CHANGED:
+		s.updateLeader()
+	case nebula.ErrorCode_E_WRITE_WRITE_CONFLICT:
+	case nebula.ErrorCode_E_CONSENSUS_ERROR:
+	case nebula.ErrorCode_E_OUTDATED_TERM:
+		fmt.Printf("raft error: %+v, try again\n", fPart.GetCode().String())
+		// just try again
+	default:
+		panic(fmt.Sprintf("unknown err code: %+v", fPart.GetCode().String()))
 	}
 
 	return resp, err
 }
 
-func NewStorageClient(metaClient *meta.MetaServiceClient, storageOpt StorageOption) (*StorageClient, error) {
-	listClusterReq := &meta.ListClusterInfoReq{}
-	listClusterResp, err := metaClient.ListCluster(listClusterReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed list nebula cluster, nested error: %+v", err)
-	}
-
-	clients := []*storage.GraphStorageServiceClient{}
-	storageServers := listClusterResp.GetStorageServers()
-	for _, ss := range storageServers {
-		host := ss.Host
-		addr := fmt.Sprintf("%s:%d", host.GetHost(), host.GetPort())
-		storageClient, err := newStorageClient(addr, storageOpt)
-		if err != nil {
-			return nil, fmt.Errorf("error init storage clients, nested error: %+v", err)
-		}
-
-		clients = append(clients, storageClient)
-	}
-
-	storageClient := &StorageClient{
-		clients:    clients,
-		currLeader: 2,
-	}
-
-	return storageClient, nil
+func (s *storageClientProxy) ChainAddEdges(req *storage.AddEdgesRequest) (*storage.ExecResponse, error) {
+	resp, err := s.currLeader().ChainAddEdges(req)
+	return s.checkResponse(resp, err)
 }
 
-/*
-func NewStorageClientsFromMeta(metaClient *meta.MetaServiceClient, storageOpt StorageOption) ([]*storage.GraphStorageServiceClient, error) {
-	listClusterReq := &meta.ListClusterInfoReq{}
-	listClusterResp, err := metaClient.ListCluster(listClusterReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed list nebula cluster, nested error: %+v", err)
+func (s *storageClientProxy) markLeaderDown() {
+	s.connDown[s.leader] = struct{}{}
+}
+
+func (s *storageClientProxy) updateLeader() {
+	if len(s.connDown) == len(s.peers) {
+		fmt.Printf("all peers down, wait 1s and will try aganin later")
+		time.Sleep(1 * time.Second)
 	}
 
-	clients := []*storage.GraphStorageServiceClient{}
-	storageServers := listClusterResp.GetStorageServers()
-	for _, ss := range storageServers {
-		host := ss.Host
-		addr := fmt.Sprintf("%s:%d", host.GetHost(), host.GetPort())
-		storageClient, err := newStorageClient(addr, storageOpt)
-		if err != nil {
-			return nil, fmt.Errorf("error init storage clients, nested error: %+v", err)
+	s.leader = (s.leader + 1) % len(s.peers)
+	if _, ok := s.connDown[s.leader]; ok {
+		// try reconnect if down
+		if err := s.peers[s.leader].rest(); err != nil {
+			delete(s.connDown, s.leader)
+		} else {
+			fmt.Printf("failed connecting %+v: %+v", s.peers[s.leader], err)
+		}
+	}
+}
+
+func toAddr(h *nebula.HostAddr) string {
+	return fmt.Sprintf("%s:%d", h.Host, h.Port)
+}
+
+func NewStorageClient(m *MetaClient, opt StorageOption, spaceID nebula.GraphSpaceID, partID nebula.PartitionID) (StorageClient, error) {
+	client := storageClientProxy{
+		metaClient: m,
+		connDown:   map[int]struct{}{},
+	}
+
+	listPartsReq := meta.ListPartsReq{
+		SpaceID: spaceID,
+		PartIds: []nebula.PartitionID{partID},
+	}
+	listPartResp, err := m.ListParts(&listPartsReq)
+	if err != nil {
+		return nil, fmt.Errorf("error creating storage client: %+v", err)
+	}
+
+	partItem := listPartResp.Parts[0]
+	leaderAddr := toAddr(partItem.GetLeader())
+	for i, h := range partItem.Peers {
+		addr := toAddr(h)
+		if addr == leaderAddr {
+			client.leader = i
 		}
 
-		clients = append(clients, storageClient)
+		c, err := newDefaultStorageClient(addr, opt)
+		if err != nil {
+			return nil, fmt.Errorf("error creating storage client: %+v", err)
+		}
+
+		client.peers = append(client.peers, c)
 	}
 
-	return clients, nil
+	return &client, nil
 }
-*/
