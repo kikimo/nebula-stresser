@@ -143,6 +143,7 @@ func (s *storageClientProxy) checkResponse(resp *storage.ExecResponse, err error
 	switch fPart.GetCode() {
 	case nebula.ErrorCode_E_LEADER_CHANGED:
 		s.updateLeader()
+		// return resp, fmt.Errorf("leader changed: %+v", fPart.GetCode().String())
 	case nebula.ErrorCode_E_WRITE_WRITE_CONFLICT:
 	case nebula.ErrorCode_E_CONSENSUS_ERROR:
 	case nebula.ErrorCode_E_OUTDATED_TERM:
@@ -152,7 +153,7 @@ func (s *storageClientProxy) checkResponse(resp *storage.ExecResponse, err error
 		panic(fmt.Sprintf("unknown err code: %+v", fPart.GetCode().String()))
 	}
 
-	return resp, err
+	return resp, fmt.Errorf("nebula error: %s", fPart.GetCode().String())
 }
 
 func (s *storageClientProxy) ChainAddEdges(req *storage.AddEdgesRequest) (*storage.ExecResponse, error) {

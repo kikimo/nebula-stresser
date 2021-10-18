@@ -47,7 +47,7 @@ func init() {
 	checkedgeCmd.Flags().StringVarP(&checkSpace, "space", "s", "ttos_3p3r", "nebula to check")
 	checkedgeCmd.Flags().StringVarP(&checkEdge, "edge", "e", "known2", "edge to check")
 	checkedgeCmd.Flags().IntVarP(&checkEdgeVertexNum, "vertex", "x", 32, "number of vertex we wanna check")
-	checkedgeCmd.Flags().StringVarP(&checkMetaAddr, "meta_addr", "m", "192.168.15.11:8448", "meta server addr")
+	checkedgeCmd.Flags().StringVarP(&checkMetaAddr, "meta_addr", "m", "192.168.15.11:9559", "meta server addr")
 	rootCmd.AddCommand(checkedgeCmd)
 
 	// Here you will define your flags and configuration settings.

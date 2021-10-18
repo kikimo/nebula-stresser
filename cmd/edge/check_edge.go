@@ -54,6 +54,7 @@ func (c *NebulaClient) initStorageClients() error {
 	metaClient := c.GetMetaClient()
 	listClusterReq := &meta.ListClusterInfoReq{}
 	listClusterResp, err := metaClient.ListCluster(listClusterReq)
+	// fmt.Printf("list cluster resp: %+v, err: %+v\n", listClusterResp, err)
 	if err != nil {
 		return fmt.Errorf("failed list nebula cluster, nested error: %+v", err)
 	}
@@ -63,6 +64,7 @@ func (c *NebulaClient) initStorageClients() error {
 		Timeout:    1 * time.Second,
 		BufferSize: 128 << 10,
 	}
+	// fmt.Printf("storage servers: %+v\n", storageServers)
 	for _, ss := range storageServers {
 		host := ss.Host
 		storageAddr := fmt.Sprintf("%s:%d", host.GetHost(), host.GetPort())
@@ -119,7 +121,12 @@ func (s *NebulaClient) GetEdgeItem(spaceID nebula.GraphSpaceID, edgeName string)
 	return nil, fmt.Errorf("edge %s not found", edgeName)
 }
 
-func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse bool) (map[string]string, error) {
+type EdgeProps struct {
+	idx string
+	ts  *nebula.DateTime
+}
+
+func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse bool) (map[string]*EdgeProps, error) {
 	// TODO close client
 	space, err := s.nebulaClient.GetSpace(spaceName)
 	if err != nil {
@@ -132,9 +139,10 @@ func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse b
 	if err != nil {
 		return nil, fmt.Errorf("error get edge: %+v", err)
 	}
-	edges := map[string]string{}
+	edges := map[string]*EdgeProps{}
 
-	props := [][]byte{[]byte("_src"), []byte("_type"), []byte("_rank"), []byte("_dst"), []byte("idx")}
+	props := [][]byte{[]byte("_src"), []byte("_type"), []byte("_rank"), []byte("_dst"), []byte("idx"), []byte("ts")}
+	// props := [][]byte{[]byte("_src"), []byte("_type"), []byte("_rank"), []byte("_dst"), []byte("idx")}
 	if reverse {
 		props[0], props[3] = props[3], props[0]
 	}
@@ -150,6 +158,7 @@ func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse b
 	}
 
 	totalEdges := 0
+	// fmt.Printf("number of parts: %d, sclients: %+v\n", parts, s.nebulaClient.storageClients)
 	for _, sclient := range s.nebulaClient.storageClients {
 		for i := 1; i <= int(parts); i++ {
 			hasNext := true
@@ -163,6 +172,7 @@ func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse b
 					ReturnColumns: edgeProps,
 				}
 				scanEdgeResp, err := sclient.ScanEdge(&scanEdgeRequest)
+				// fmt.Printf("scan edge resp: %+v, err: %+v\n", scanEdgeResp, err)
 				if err != nil {
 					return nil, fmt.Errorf("error scanning edge: %+v", err)
 				}
@@ -177,8 +187,15 @@ func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse b
 					// fmt.Printf("vals: %+v\n", values)
 					src, dst := values[0].IVal, values[3].IVal
 					idx := string(values[4].SVal)
+					// TODO check data consistence
+					ts := values[5].DtVal
+					// fmt.Printf("ts: %+v\n", ts)
+					p := EdgeProps{
+						idx: idx,
+						ts:  ts,
+					}
 					key := fmt.Sprintf("%d->%d", *src, *dst)
-					edges[key] = idx
+					edges[key] = &p
 				}
 
 				hasNext = scanEdgeResp.GetHasNext()
@@ -191,15 +208,15 @@ func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse b
 	return edges, nil
 }
 
-func (s *NebulaStresser) getEdges(spaceName string, edgeName string, reverse bool) (map[string]string, error) {
+func (s *NebulaStresser) getEdges(spaceName string, edgeName string, reverse bool) (map[string]*EdgeProps, error) {
 	return s.doGetEdges(spaceName, edgeName, reverse)
 }
 
 // a - b
-func setDiff(a, b map[string]string) []string {
+func setDiff(a, b map[string]*EdgeProps) []string {
 	ret := []string{}
 
-	for k, _ := range a {
+	for k := range a {
 		if _, ok := b[k]; !ok {
 			ret = append(ret, k)
 		}
@@ -208,26 +225,26 @@ func setDiff(a, b map[string]string) []string {
 	return ret
 }
 
-func setUnion(a, b map[string]string) []string {
+func setUnion(a, b map[string]*EdgeProps) []string {
 	all := map[string]struct{}{}
 
-	for k, _ := range a {
+	for k := range a {
 		all[k] = struct{}{}
 	}
 
-	for k, _ := range b {
+	for k := range b {
 		all[k] = struct{}{}
 	}
 
 	ret := []string{}
-	for k, _ := range all {
+	for k := range all {
 		ret = append(ret, k)
 	}
 
 	return ret
 }
 
-func setInterset(a, b map[string]string) []string {
+func setInterset(a, b map[string]*EdgeProps) []string {
 	ret := []string{}
 
 	for k, _ := range a {
@@ -259,7 +276,7 @@ func (s *NebulaStresser) CheckEdges(spaceName string, edge string, vertexes int)
 	if len(missingForwardEdges) > 0 {
 		fmt.Printf("%d missing forward edges:\n", len(missingForwardEdges))
 		for _, e := range missingForwardEdges {
-			fmt.Printf("%s\n", e)
+			fmt.Printf("%s, corresponding backward edge prop: idx = %s, \n", e, backwarkEdges[e].idx)
 		}
 		fmt.Println()
 	}
@@ -268,7 +285,7 @@ func (s *NebulaStresser) CheckEdges(spaceName string, edge string, vertexes int)
 	if len(missingBackwardEdges) > 0 {
 		fmt.Printf("%d missing backward edges:\n", len(missingBackwardEdges))
 		for _, e := range missingBackwardEdges {
-			fmt.Printf("%s\n", e)
+			fmt.Printf("%s, corresponding forward edge prop: idx = %s\n", e, forwardEdges[e].idx)
 		}
 		fmt.Println()
 	}
@@ -276,11 +293,27 @@ func (s *NebulaStresser) CheckEdges(spaceName string, edge string, vertexes int)
 	semiNormalEdges := setInterset(backwarkEdges, forwardEdges)
 	fmt.Printf("found %d semi-normal edges\n", len(semiNormalEdges))
 	for _, k := range semiNormalEdges {
-		if backwarkEdges[k] == forwardEdges[k] {
+		bp := backwarkEdges[k]
+		fp := forwardEdges[k]
+
+		if bp.idx == fp.idx {
+			// if bp.idx == fp.idx && ((bp.ts == nil && fp.ts == nil) || (bp.ts != nil && fp.ts != nil && *bp.ts == *fp.ts)) {
 			continue
 		}
 
-		fmt.Printf("prop mismatch in edge: %s, forward prop: %s, backward: %s\n", k, forwardEdges[k], backwarkEdges[k])
+		toSign := func(eq bool) string {
+			if eq {
+				return "=="
+			}
+
+			return "!="
+		}
+
+		tsEq := bp.ts == fp.ts
+		idxEq := bp.idx == fp.idx
+
+		fmt.Printf("prop mismatch in edge %s, forward vs backward, idx: %s %s %s, ts: %+v %s %+v\n", k, fp.idx, toSign(idxEq), bp.idx, fp.ts, toSign(tsEq), bp.ts)
+		// fmt.Printf("prop mismatch in edge: %s, forward prop: (idx  %s, ts %+v), backward: idx %s, ts %+v\n", k, fp.idx, fp.ts, bp.idx, bp.ts)
 	}
 
 	totalEdgeSet := map[string]struct{}{}

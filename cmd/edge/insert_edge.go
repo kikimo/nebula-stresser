@@ -162,6 +162,9 @@ func RunInsertEdge(spaceName string, edgeName string, clientNum int, vertexNum i
 			go func(c *client.SessionX, stmt string) {
 				// for k := 0; k < 100; k++ {
 				for {
+					// ret, err := c.Execute(stmt)
+					// ret.GetErrorMsg()
+					// ret.geterr
 					_, err := c.Execute(stmt)
 					if err == nil {
 						fmt.Printf("done edge %d\n", i)

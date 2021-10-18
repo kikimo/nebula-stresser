@@ -17,15 +17,20 @@ package main
 
 import (
 	"math/rand"
+	"net/http"
+	_ "net/http/pprof"
 	"time"
 
 	"github.com/kikimo/nebula-stresser/cmd"
 )
 
 func main() {
+	go func() {
+		http.ListenAndServe("0.0.0.0:6060", nil)
+	}()
 	cmd.Execute()
 }
 
-func inti() {
+func init() {
 	rand.Seed(time.Now().UnixNano())
 }

@@ -18,6 +18,7 @@ package cmd
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,10 +33,12 @@ var (
 	stressEdgeClientNum  int
 	stressEdgeVertexNum  int
 	stressEdgeEnableToss bool
+	stressEdgeSpace      string
 )
 
 const (
-	defaultStressEdgeMetaAddr = "192.168.15.11:8448"
+	defaultStressEdgeMetaAddr = "192.168.15.11:9559"
+	defaultStressEdgeSpace    = "ttos_3p3r"
 	// defaultStressEdgeMetaAddr = "192.168.8.53:9559"
 )
 
@@ -59,6 +62,7 @@ func init() {
 	stressEdgeCmd.Flags().IntVarP(&stressEdgeClientNum, "client", "c", 1, "number of clients")
 	stressEdgeCmd.Flags().IntVarP(&stressEdgeVertexNum, "vertex", "x", 1, "number of vertex")
 	stressEdgeCmd.Flags().BoolVarP(&stressEdgeEnableToss, "toss", "t", true, "enable toss")
+	stressEdgeCmd.Flags().StringVarP(&stressEdgeSpace, "space", "s", defaultStressEdgeSpace, "space to operate on")
 	rootCmd.AddCommand(stressEdgeCmd)
 
 	// Here you will define your flags and configuration settings.
@@ -119,11 +123,11 @@ func doStressEdge(client client.StorageClient, spaceID nebula.GraphSpaceID, numP
 
 	// fmt.Printf("client: %+v, req: %+v\n", client, req)
 	// FIXME use function pointer instead
-	if stressEdgeEnableToss {
-		return client.ChainAddEdges(&req)
-	} else {
-		return client.AddEdges(&req)
-	}
+	return client.ChainAddEdges(&req)
+	// if stressEdgeEnableToss {
+	// } else {
+	// 	return client.AddEdges(&req)
+	// }
 }
 
 func RunStressEdge(clientNum int, vertexNum int) {
@@ -210,25 +214,72 @@ func RunStressEdge(clientNum int, vertexNum int) {
 	// 	fmt.Printf("%d: %s\n", i+1, stmts[0][i])
 	// }
 	// metaLock := sync.Mutex{}
-	fmt.Printf("inserting edge...\n")
+	/*
+		fmt.Printf("inserting edge...\n")
+		for i := 0; i < edges; i++ {
+			var waitClients sync.WaitGroup
+			waitClients.Add(clientNum)
+			// resultStats[i] = make([]bool, edges)
+			for j := 0; j < clientNum; j++ {
+				go func(cid int, edge int) {
+					// for j := 0; j <
+					src := edge / vertexNum
+					dst := edge % vertexNum
+					idx := fmt.Sprintf("%d->%d", cid, edge)
+					fmt.Printf("client %d insert %d edge\n", cid, edge)
+					retry := 0
+					for {
+						resp, err := doStressEdge(clients[cid], spaceID, numParts, edgeType, src, dst, idx)
+						if err == nil {
+							// resultStats[cid][j] = true
+							break
+						}
+
+						// ignore nebula error
+						if strings.Contains(err.Error(), "nebula error: ") {
+							break
+						}
+
+						fmt.Printf("error insert edge: %+v, resp: %+v, retry\n", err, resp)
+						retry++
+					}
+					waitClients.Done()
+				}(j, i)
+			}
+			waitClients.Wait()
+		}
+	*/
+
 	var waitClients sync.WaitGroup
 	waitClients.Add(clientNum)
+	// resultStats := make([][]bool, clientNum)
 	for i := 0; i < clientNum; i++ {
+		// resultStats[i] = make([]bool, edges)
+
+		// go func(cid int, stats []bool) {
 		go func(cid int) {
 			// for j := 0; j <
 			for j := 0; j < edges; j++ {
 				src := j / vertexNum
 				dst := j % vertexNum
 				idx := fmt.Sprintf("%d->%d", cid, j)
-				fmt.Printf("client %d insert %d edge\n", cid, j)
+				// fmt.Printf("client %d insert %d edge\n", cid, j)
 				retry := 0
 				for {
-					resp, err := doStressEdge(clients[cid], spaceID, numParts, edgeType, src, dst, idx)
+					// resp, err := doStressEdge(clients[cid], spaceID, numParts, edgeType, src, dst, idx)
+					_, err := doStressEdge(clients[cid], spaceID, numParts, edgeType, src, dst, idx)
 					if err == nil {
+						// resultStats[cid][j] = true
 						break
 					}
 
-					fmt.Printf("error insert edge: %+v, resp: %+v", err, resp)
+					// ignore nebula error
+					if strings.Contains(err.Error(), "nebula error: ") {
+						// fmt.Printf("error insert edge: %+v, resp: %+v, retry\n", err, resp)
+						break
+					}
+
+					// fmt.Printf("error insert edge: %+v, resp: %+v, retry\n", err, resp)
 					retry++
 				}
 
@@ -237,6 +288,30 @@ func RunStressEdge(clientNum int, vertexNum int) {
 		}(i)
 	}
 	waitClients.Wait()
+
+	/*
+		failed := []int{}
+		for i := 0; i < edges; i++ {
+			succ := false
+			for j := 0; j < clientNum; j++ {
+				if resultStats[j][i] {
+					succ = true
+					break
+				}
+			}
+
+			if !succ {
+				failed = append(failed, i)
+			}
+		}
+
+		fmt.Printf("failed edges: %d\n", len(failed))
+		for _, idx := range failed {
+			src := idx / vertexNum
+			dst := idx % vertexNum
+			fmt.Printf("failed edge: %d->%d\n", src, dst)
+		}
+	*/
 
 	/*
 		for i := 0; i < edges; i++ {
