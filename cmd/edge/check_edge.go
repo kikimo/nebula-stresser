@@ -296,8 +296,8 @@ func (s *NebulaStresser) CheckEdges(spaceName string, edge string, vertexes int)
 		bp := backwarkEdges[k]
 		fp := forwardEdges[k]
 
-		if bp.idx == fp.idx {
-			// if bp.idx == fp.idx && ((bp.ts == nil && fp.ts == nil) || (bp.ts != nil && fp.ts != nil && *bp.ts == *fp.ts)) {
+		// if bp.idx == fp.idx {
+		if bp.idx == fp.idx && ((bp.ts == nil && fp.ts == nil) || (bp.ts != nil && fp.ts != nil && *bp.ts == *fp.ts)) {
 			continue
 		}
 

@@ -117,8 +117,8 @@ func doStressEdge(client client.StorageClient, spaceID nebula.GraphSpaceID, numP
 	req := storage.AddEdgesRequest{
 		SpaceID: spaceID,
 		// SpaceID:   8848,
-		Parts:     parts,
-		PropNames: [][]byte{[]byte("idx")},
+		Parts: parts,
+		// PropNames: [][]byte{[]byte("idx")},
 	}
 
 	// fmt.Printf("client: %+v, req: %+v\n", client, req)
