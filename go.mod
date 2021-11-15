@@ -15,4 +15,5 @@ require (
 )
 
 // replace github.com/vesoft-inc/nebula-go/v2 v2.5.1 => github.com/vesoft-inc/nebula-go v1
-replace github.com/vesoft-inc/nebula-go/v2 v2.5.1 => github.com/kikimo/nebula-go/v2 v2.6.1 // indirect
+// replace github.com/vesoft-inc/nebula-go/v2 v2.5.1 => github.com/kikimo/nebula-go/v2 v2.6.0 // indirect
+replace github.com/vesoft-inc/nebula-go/v2 v2.5.1 => github.com/kikimo/nebula-go/v2 v2.6.4 // indirect

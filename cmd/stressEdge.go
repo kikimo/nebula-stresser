@@ -123,11 +123,13 @@ func doStressEdge(client client.StorageClient, spaceID nebula.GraphSpaceID, numP
 
 	// fmt.Printf("client: %+v, req: %+v\n", client, req)
 	// FIXME use function pointer instead
-	return client.ChainAddEdges(&req)
 	// if stressEdgeEnableToss {
+	// 	return client.ChainAddEdges(&req)
 	// } else {
 	// 	return client.AddEdges(&req)
 	// }
+	return client.ChainAddEdges(&req)
+	// return client.AddEdges(&req)
 }
 
 func RunStressEdge(clientNum int, vertexNum int) {
