@@ -161,14 +161,17 @@ func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse b
 	// fmt.Printf("number of parts: %d, sclients: %+v\n", parts, s.nebulaClient.storageClients)
 	for _, sclient := range s.nebulaClient.storageClients {
 		for i := 1; i <= int(parts); i++ {
-			hasNext := true
-			var cursor []byte = nil
-			for hasNext {
+			cursor := &storage.ScanCursor{
+				HasNext:    true,
+				NextCursor: nil,
+			}
+			for cursor.HasNext {
 				scanEdgeRequest := storage.ScanEdgeRequest{
-					SpaceID:       spaceID,
-					PartID:        int32(i),
+					SpaceID: spaceID,
+					Parts: map[nebula.GraphSpaceID]*storage.ScanCursor{
+						int32(i): cursor,
+					},
 					Limit:         1024,
-					Cursor:        cursor,
 					ReturnColumns: edgeProps,
 				}
 				scanEdgeResp, err := sclient.ScanEdge(&scanEdgeRequest)
@@ -198,8 +201,9 @@ func (s *NebulaStresser) doGetEdges(spaceName string, edgeName string, reverse b
 					edges[key] = &p
 				}
 
-				hasNext = scanEdgeResp.GetHasNext()
-				cursor = scanEdgeResp.GetNextCursor()
+				// scanEdgeResp.GetResult_(
+				// hasNext = scanEdgeResp.GetHasNext()
+				cursor = scanEdgeResp.GetCursors()[int32(i)]
 			}
 		}
 
